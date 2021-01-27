@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -9,7 +10,8 @@ namespace ActivityTracker
     public partial class MainForm : Form
     {
         private Tracker m_tracker;
-        
+        private bool m_allowclose;
+
         public MainForm()
         {
             InitializeComponent();
@@ -27,8 +29,7 @@ namespace ActivityTracker
             {
                 var listCombined = new List<ActivityDuration>();
                 var activities = m_tracker.Activity;
-                TimeSpan busy = TimeSpan.Zero;
-                TimeSpan idle = TimeSpan.Zero;
+                TimeSpan busy = TimeSpan.Zero, idle = TimeSpan.Zero;
                 foreach (var activity in activities)
                 {
                     if (!listCombined.Exists(p => p.AppName == activity.AppName))
@@ -41,7 +42,7 @@ namespace ActivityTracker
                         busy = busy.Add(activity.ActivityEnd - activity.ActivityStart);
                 }
 
-                Text = $@"Activity Tracker - Idle: {idle:hh\:mm\:ss}  Busy: {busy:hh\:mm\:ss}";
+                notifyIcon.Text = Text = $@"Activity Tracker - Idle: {idle:hh\:mm\:ss}  Busy: {busy:hh\:mm\:ss}";
 
                 listCombined.Sort((c1, c2) => (c2.Duration.CompareTo(c1.Duration)));
                 lstViewEntries.BeginUpdate();
@@ -62,6 +63,35 @@ namespace ActivityTracker
         private void lstViewEntries_DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
         {
             e.DrawDefault = true;
+        }
+
+        private void notifyIcon_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            WindowState = FormWindowState.Minimized;
+            Show();
+            WindowState = FormWindowState.Normal;
+        }
+
+        private void toolStripMenuItemExit_Click(object sender, EventArgs e)
+        {
+            m_allowclose = true;
+            Close();
+        }
+
+        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            Hide();
+
+            if (e.CloseReason == CloseReason.WindowsShutDown) m_allowclose = true;
+            if (e.CloseReason == CloseReason.TaskManagerClosing) m_allowclose = true;
+
+            e.Cancel = !m_allowclose;
+        }
+
+        private void MainForm_Load(object sender, EventArgs e)
+        {
+            if (!Debugger.IsAttached)
+                Hide();
         }
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -9,40 +10,12 @@ using System.Windows.Automation;
 
 namespace ActivityTracker
 {
-    class ActivityEntry
-    {
-        public string AppName { get; set; }
-        public DateTime ActivityStart { get; set; }
-        public DateTime ActivityEnd { get; set; }
-
-        public ActivityEntry(string appName, DateTime start)
-        {
-            AppName = appName;
-            ActivityStart = start;
-            ActivityEnd = DateTime.Now;
-        }
-
-        public const string IdleEntry = "Idle";
-    }
-    
-    class ActivityDuration
-    {
-        public string AppName { get; set; }
-        public TimeSpan Duration { get; set; }
-
-        public ActivityDuration(string appName)
-        {
-            AppName = appName;
-            Duration = TimeSpan.Zero;
-        }
-    }
-
     class Tracker
     {
         private readonly List<ActivityEntry> m_activity;
         public event EventHandler<EventArgs> TrackerUpdate;
         private object m_lock = new();
-        private const int IDLE_TIMEOUT_IN_MINUTES = 2;
+        private const int IDLE_TIMEOUT_IN_MINUTES = 5;
         private const int FILE_BACKUP_TIME_IN_MINUTES = 5;
         private DateTime m_lastFileBackupTime;
         
@@ -50,6 +23,7 @@ namespace ActivityTracker
         {
             m_lastFileBackupTime = DateTime.Now;
             m_activity = new List<ActivityEntry> {new(ActivityEntry.IdleEntry, DateTime.Now)};
+            readFromBackupFile();
             var workerThread = new Thread(worker) {IsBackground = true, Name = "ActivityTrackerThread"};
             workerThread.Start();
         }
@@ -181,10 +155,43 @@ namespace ActivityTracker
             if (!Directory.Exists(tempPath))
                 Directory.CreateDirectory(tempPath);
             var lines = listCombined.Select(entry => entry.AppName + ";" + entry.Duration.ToString(@"hh\:mm\:ss")).ToList();
-            File.WriteAllLines(Path.Combine(tempPath,"Activity.csv"), lines);
+            var today = DateTime.Now.ToString("yyyy-MM-d");
+            File.WriteAllLines(Path.Combine(tempPath,"ActivityCombined_" + today + ".csv"), lines);
+
+            lines = Activity.Select(entry => entry.AppName + ";" + entry.ActivityStart.ToString(@"HH\:mm\:ss") + ";" + entry.ActivityEnd.ToString(@"HH\:mm\:ss")).ToList();
+            File.WriteAllLines(Path.Combine(tempPath, "ActivityRaw_" + today + ".csv"), lines);
         }
 
-        private bool checkInteraction()
+        private void readFromBackupFile()
+        {
+            lock (m_lock)
+            {
+                m_activity.Clear();
+                try
+                {
+                    string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
+                    var today = DateTime.Now.ToString("yyyy-MM-d");
+                    string fileName = Path.Combine(tempPath, "ActivityRaw_" + today + ".csv");
+                    if (File.Exists(fileName))
+                    {
+                        var lines = File.ReadAllLines(fileName);
+                        foreach (var line in lines)
+                        {
+                            var res = line.Split(';');
+                            ActivityEntry entry = new ActivityEntry(res[0], Convert.ToDateTime(res[1]));
+                            entry.ActivityEnd = Convert.ToDateTime(res[2]);
+                            m_activity.Add(entry);
+                        }
+                    }
+                }
+                catch
+                {
+                    //Obviously cannot read the file
+                }
+            }
+        }
+
+        private static bool checkInteraction()
         {
             WinAPI.LASTINPUTINFO info = new WinAPI.LASTINPUTINFO();
             info.cbSize = (uint)Marshal.SizeOf(info);
@@ -231,6 +238,18 @@ namespace ActivityTracker
                     return "Skype";
                 case "mstsc":
                     return "Remote Desktop";
+                case "winword":
+                    return "Word";
+                case "explorer":
+                    return "Explorer";
+                case "notepad":
+                    return "Notepad";
+                case "acrord32":
+                    return "Acrobat Reader";
+                case "winmergeu":
+                    return "WinMerge";
+                case "excel":
+                    return "Excel";
             }
 
             return appName;

@@ -8,11 +8,14 @@ namespace ActivityTracker
         public DateTime ActivityStart { get; set; }
         public DateTime ActivityEnd { get; set; }
 
-        public ActivityEntry(string appName, DateTime start)
+        public ActivityEntry(string appName, DateTime start) : this(appName, start, DateTime.Now)
+        {}
+
+        public ActivityEntry(string appName, DateTime start, DateTime end)
         {
             AppName = appName;
             ActivityStart = start;
-            ActivityEnd = DateTime.Now;
+            ActivityEnd = end;
         }
 
         public const string IdleEntry = "Idle";

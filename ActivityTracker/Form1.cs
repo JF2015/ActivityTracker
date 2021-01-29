@@ -20,10 +20,15 @@ namespace ActivityTracker
             lstViewEntries
                 .GetType()
                 .GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
-                .SetValue(lstViewEntries, true, null);
+                ?.SetValue(lstViewEntries, true, null);
         }
         
         private void m_trackerUpdated(object sender, EventArgs e)
+        {
+            updateUI();
+        }
+
+        private void updateUI()
         {
             BeginInvoke((Action)(() =>
             {
@@ -86,10 +91,13 @@ namespace ActivityTracker
             if (e.CloseReason == CloseReason.TaskManagerClosing) m_allowclose = true;
 
             e.Cancel = !m_allowclose;
+            if(m_allowclose)
+                m_tracker.Stop();
         }
 
         private void MainForm_Load(object sender, EventArgs e)
         {
+            updateUI();
             if (!Debugger.IsAttached)
                 Hide();
         }

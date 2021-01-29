@@ -1,11 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Automation;
 
 namespace ActivityTracker
@@ -18,14 +18,25 @@ namespace ActivityTracker
         private const int IDLE_TIMEOUT_IN_MINUTES = 5;
         private const int FILE_BACKUP_TIME_IN_MINUTES = 5;
         private DateTime m_lastFileBackupTime;
-        
+        private CancellationTokenSource m_stopToken; 
+        private const string ActivityrawFile = "ActivityRaw1_";
+        private const string ActivityCombinedFile = "ActivityCombined1_";
+        private const string ActivityFileExtension = ".csv";
+
         public Tracker()
         {
             m_lastFileBackupTime = DateTime.Now;
-            m_activity = new List<ActivityEntry> {new(ActivityEntry.IdleEntry, DateTime.Now)};
+            m_stopToken = new CancellationTokenSource();
+            m_activity = new List<ActivityEntry> { new(ActivityEntry.IdleEntry, DateTime.Now) };
             readFromBackupFile();
-            var workerThread = new Thread(worker) {IsBackground = true, Name = "ActivityTrackerThread"};
+            var workerThread = new Thread(worker) { IsBackground = true, Name = "ActivityTrackerThread" };
             workerThread.Start();
+        }
+
+        public void Stop()
+        {
+            m_stopToken.Cancel();
+            backupToFile();
         }
 
         public List<ActivityEntry> Activity
@@ -49,9 +60,9 @@ namespace ActivityTracker
                 // the chrome process must have a window
                 if (proc.MainWindowHandle == IntPtr.Zero)
                     return "Unknown Website";
-                
+
                 AutomationElement root = AutomationElement.FromHandle(proc.MainWindowHandle);
-                
+
                 //Searching by name must be localized and is rather slow as it searches the whole tree
                 //var SearchBar = root.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "Adress und Suchleiste"));
 
@@ -98,7 +109,7 @@ namespace ActivityTracker
                     return "Unknown Website";
                 ret = ret.Replace("http://", "").Replace("https://", "");
                 if (ret.Contains("/"))
-                    ret = ret.Substring(0, ret.IndexOf("/"));
+                    ret = ret.Substring(0, ret.IndexOf("/", StringComparison.Ordinal));
                 return ret;
             }
             catch (Exception)
@@ -114,7 +125,11 @@ namespace ActivityTracker
             var span = new TimeSpan(0, 0, 5);
             while (true)
             {
-                Thread.Sleep((int)span.TotalMilliseconds);
+                if (m_stopToken.IsCancellationRequested)
+                    break;
+                Task.Delay((int) span.TotalMilliseconds, m_stopToken.Token);
+                if (m_stopToken.IsCancellationRequested)
+                    break;
                 var entryText = checkInteraction() ? getActiveApplicationName() : ActivityEntry.IdleEntry;
                 lock (m_lock)
                 {
@@ -130,10 +145,19 @@ namespace ActivityTracker
 
                 TrackerUpdate?.Invoke(this, new EventArgs());
 
-                if ((DateTime.Now - m_lastFileBackupTime).TotalMinutes > FILE_BACKUP_TIME_IN_MINUTES)
+                if (!((DateTime.Now - m_lastFileBackupTime).TotalMinutes > FILE_BACKUP_TIME_IN_MINUTES))
+                    continue;
+
+                bool resetNextDay = m_lastFileBackupTime.Date != DateTime.Now.Date;
+                m_lastFileBackupTime = DateTime.Now;
+                backupToFile();
+                if (resetNextDay)
                 {
-                    m_lastFileBackupTime = DateTime.Now;
-                    backupToFile();
+                    lock (m_lock)
+                    {
+                        m_activity.Clear();
+                        m_activity.Add(new(ActivityEntry.IdleEntry, DateTime.Now));
+                    }
                 }
             }
         }
@@ -156,38 +180,35 @@ namespace ActivityTracker
                 Directory.CreateDirectory(tempPath);
             var lines = listCombined.Select(entry => entry.AppName + ";" + entry.Duration.ToString(@"hh\:mm\:ss")).ToList();
             var today = DateTime.Now.ToString("yyyy-MM-d");
-            File.WriteAllLines(Path.Combine(tempPath,"ActivityCombined_" + today + ".csv"), lines);
+            File.WriteAllLines(Path.Combine(tempPath, ActivityCombinedFile + today + ActivityFileExtension), lines);
 
             lines = Activity.Select(entry => entry.AppName + ";" + entry.ActivityStart.ToString(@"HH\:mm\:ss") + ";" + entry.ActivityEnd.ToString(@"HH\:mm\:ss")).ToList();
-            File.WriteAllLines(Path.Combine(tempPath, "ActivityRaw_" + today + ".csv"), lines);
+            
+            File.WriteAllLines(Path.Combine(tempPath, ActivityrawFile + today + ActivityFileExtension), lines);
         }
 
         private void readFromBackupFile()
         {
-            lock (m_lock)
+            try
             {
-                m_activity.Clear();
-                try
+                string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
+                var today = DateTime.Now.ToString("yyyy-MM-d");
+                string fileName = Path.Combine(tempPath, ActivityrawFile + today + ActivityFileExtension);
+                if (!File.Exists(fileName)) 
+                    return;
+                var lines = File.ReadAllLines(fileName);
+                lock (m_lock)
                 {
-                    string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
-                    var today = DateTime.Now.ToString("yyyy-MM-d");
-                    string fileName = Path.Combine(tempPath, "ActivityRaw_" + today + ".csv");
-                    if (File.Exists(fileName))
+                    foreach (var line in lines)
                     {
-                        var lines = File.ReadAllLines(fileName);
-                        foreach (var line in lines)
-                        {
-                            var res = line.Split(';');
-                            ActivityEntry entry = new ActivityEntry(res[0], Convert.ToDateTime(res[1]));
-                            entry.ActivityEnd = Convert.ToDateTime(res[2]);
-                            m_activity.Add(entry);
-                        }
+                        var res = line.Split(';');
+                        m_activity.Add(new ActivityEntry(res[0], Convert.ToDateTime(res[1]), Convert.ToDateTime(res[2])));
                     }
                 }
-                catch
-                {
-                    //Obviously cannot read the file
-                }
+            }
+            catch
+            {
+                //Obviously cannot read the file
             }
         }
 
@@ -197,7 +218,7 @@ namespace ActivityTracker
             info.cbSize = (uint)Marshal.SizeOf(info);
             if (!WinAPI.GetLastInputInfo(ref info))
                 return false;
-            
+
             return (((Environment.TickCount & int.MaxValue) - (info.dwTime & int.MaxValue)) & int.MaxValue) / 1000.0 / 60.0 < IDLE_TIMEOUT_IN_MINUTES;
         }
 
@@ -220,7 +241,7 @@ namespace ActivityTracker
 
             if (name == "Chrome")
                 name = getChromeUrl(proc);
-            
+
             return name;
         }
 

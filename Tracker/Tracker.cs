@@ -8,20 +8,16 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
 
-namespace ActivityTracker
+namespace Tracker
 {
-    class Tracker
+    public class Tracker
     {
         private readonly List<ActivityEntry> m_activity;
         public event EventHandler<EventArgs> TrackerUpdate;
-        private object m_lock = new();
-        private const int IDLE_TIMEOUT_IN_MINUTES = 5;
-        private const int FILE_BACKUP_TIME_IN_MINUTES = 5;
+        private readonly object m_lock = new();
+        
         private DateTime m_lastFileBackupTime;
-        private CancellationTokenSource m_stopToken; 
-        private const string ActivityrawFile = "ActivityRaw1_";
-        private const string ActivityCombinedFile = "ActivityCombined1_";
-        private const string ActivityFileExtension = ".csv";
+        private readonly CancellationTokenSource m_stopToken; 
 
         public Tracker()
         {
@@ -36,7 +32,7 @@ namespace ActivityTracker
         public void Stop()
         {
             m_stopToken.Cancel();
-            backupToFile();
+            writeToBackupFile();
         }
 
         public List<ActivityEntry> Activity
@@ -50,6 +46,98 @@ namespace ActivityTracker
                 }
 
                 return activities;
+            }
+        }
+
+        private void worker()
+        {
+            var span = new TimeSpan(0, 0, 5);
+            while (true)
+            {
+                if (m_stopToken.IsCancellationRequested)
+                    break;
+                Task.Delay((int) span.TotalMilliseconds, m_stopToken.Token);
+                if (m_stopToken.IsCancellationRequested)
+                    break;
+                var entryText = checkInteraction() ? getActiveApplicationName() : ActivityEntry.IdleEntry;
+                lock (m_lock)
+                {
+                    var lastEntry = m_activity.Last();
+                    if (lastEntry.AppName == entryText)
+                        lastEntry.ActivityEnd = DateTime.Now;
+                    else
+                    {
+                        lastEntry.ActivityEnd = DateTime.Now;
+                        m_activity.Add(new ActivityEntry(entryText, DateTime.Now));
+                    }
+                }
+
+                TrackerUpdate?.Invoke(this, new EventArgs());
+
+                if (!((DateTime.Now - m_lastFileBackupTime).TotalMinutes > TrackerDefines.FILE_BACKUP_TIME_IN_MINUTES))
+                    continue;
+
+                bool resetNextDay = m_lastFileBackupTime.Date != DateTime.Now.Date;
+                m_lastFileBackupTime = DateTime.Now;
+                writeToBackupFile();
+                if (resetNextDay)
+                {
+                    lock (m_lock)
+                    {
+                        m_activity.Clear();
+                        m_activity.Add(new(ActivityEntry.IdleEntry, DateTime.Now));
+                    }
+                }
+            }
+        }
+
+        private void writeToBackupFile()
+        {
+            string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
+            var listCombined = new List<ActivityDuration>();
+            lock (m_lock)
+            {
+                foreach (var activity in m_activity)
+                {
+                    if (!listCombined.Exists(p => p.AppName == activity.AppName))
+                        listCombined.Add(new ActivityDuration(activity.AppName));
+                    listCombined.First(p => p.AppName == activity.AppName).Duration = listCombined.First(p => p.AppName == activity.AppName).Duration.Add(activity.ActivityEnd - activity.ActivityStart);
+                }
+            }
+
+            if (!Directory.Exists(tempPath))
+                Directory.CreateDirectory(tempPath);
+            var lines = listCombined.Select(entry => entry.AppName + ";" + entry.Duration.ToString(@"hh\:mm\:ss")).ToList();
+            var today = DateTime.Now.ToString("yyyy-MM-d");
+            File.WriteAllLines(Path.Combine(tempPath, TrackerDefines.ActivityCombinedFile + today + TrackerDefines.ActivityFileExtension), lines);
+
+            lines = Activity.Select(entry => entry.AppName + ";" + entry.ActivityStart.ToString(@"HH\:mm\:ss") + ";" + entry.ActivityEnd.ToString(@"HH\:mm\:ss")).ToList();
+            
+            File.WriteAllLines(Path.Combine(tempPath, TrackerDefines.ActivityrawFile + today + TrackerDefines.ActivityFileExtension), lines);
+        }
+
+        private void readFromBackupFile()
+        {
+            try
+            {
+                string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
+                var today = DateTime.Now.ToString("yyyy-MM-d");
+                string fileName = Path.Combine(tempPath, TrackerDefines.ActivityrawFile + today + TrackerDefines.ActivityFileExtension);
+                if (!File.Exists(fileName)) 
+                    return;
+                var lines = File.ReadAllLines(fileName);
+                lock (m_lock)
+                {
+                    foreach (var line in lines)
+                    {
+                        var res = line.Split(';');
+                        m_activity.Add(new ActivityEntry(res[0], Convert.ToDateTime(res[1]), Convert.ToDateTime(res[2])));
+                    }
+                }
+            }
+            catch
+            {
+                //Obviously cannot read the file
             }
         }
 
@@ -120,98 +208,6 @@ namespace ActivityTracker
             return "Unknown Website";
         }
 
-        private void worker()
-        {
-            var span = new TimeSpan(0, 0, 5);
-            while (true)
-            {
-                if (m_stopToken.IsCancellationRequested)
-                    break;
-                Task.Delay((int) span.TotalMilliseconds, m_stopToken.Token);
-                if (m_stopToken.IsCancellationRequested)
-                    break;
-                var entryText = checkInteraction() ? getActiveApplicationName() : ActivityEntry.IdleEntry;
-                lock (m_lock)
-                {
-                    var lastEntry = m_activity.Last();
-                    if (lastEntry.AppName == entryText)
-                        lastEntry.ActivityEnd = DateTime.Now;
-                    else
-                    {
-                        lastEntry.ActivityEnd = DateTime.Now;
-                        m_activity.Add(new ActivityEntry(entryText, DateTime.Now));
-                    }
-                }
-
-                TrackerUpdate?.Invoke(this, new EventArgs());
-
-                if (!((DateTime.Now - m_lastFileBackupTime).TotalMinutes > FILE_BACKUP_TIME_IN_MINUTES))
-                    continue;
-
-                bool resetNextDay = m_lastFileBackupTime.Date != DateTime.Now.Date;
-                m_lastFileBackupTime = DateTime.Now;
-                backupToFile();
-                if (resetNextDay)
-                {
-                    lock (m_lock)
-                    {
-                        m_activity.Clear();
-                        m_activity.Add(new(ActivityEntry.IdleEntry, DateTime.Now));
-                    }
-                }
-            }
-        }
-
-        private void backupToFile()
-        {
-            string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
-            var listCombined = new List<ActivityDuration>();
-            lock (m_lock)
-            {
-                foreach (var activity in m_activity)
-                {
-                    if (!listCombined.Exists(p => p.AppName == activity.AppName))
-                        listCombined.Add(new ActivityDuration(activity.AppName));
-                    listCombined.First(p => p.AppName == activity.AppName).Duration = listCombined.First(p => p.AppName == activity.AppName).Duration.Add(activity.ActivityEnd - activity.ActivityStart);
-                }
-            }
-
-            if (!Directory.Exists(tempPath))
-                Directory.CreateDirectory(tempPath);
-            var lines = listCombined.Select(entry => entry.AppName + ";" + entry.Duration.ToString(@"hh\:mm\:ss")).ToList();
-            var today = DateTime.Now.ToString("yyyy-MM-d");
-            File.WriteAllLines(Path.Combine(tempPath, ActivityCombinedFile + today + ActivityFileExtension), lines);
-
-            lines = Activity.Select(entry => entry.AppName + ";" + entry.ActivityStart.ToString(@"HH\:mm\:ss") + ";" + entry.ActivityEnd.ToString(@"HH\:mm\:ss")).ToList();
-            
-            File.WriteAllLines(Path.Combine(tempPath, ActivityrawFile + today + ActivityFileExtension), lines);
-        }
-
-        private void readFromBackupFile()
-        {
-            try
-            {
-                string tempPath = Path.Combine(Path.GetTempPath(), "ActivityTracker");
-                var today = DateTime.Now.ToString("yyyy-MM-d");
-                string fileName = Path.Combine(tempPath, ActivityrawFile + today + ActivityFileExtension);
-                if (!File.Exists(fileName)) 
-                    return;
-                var lines = File.ReadAllLines(fileName);
-                lock (m_lock)
-                {
-                    foreach (var line in lines)
-                    {
-                        var res = line.Split(';');
-                        m_activity.Add(new ActivityEntry(res[0], Convert.ToDateTime(res[1]), Convert.ToDateTime(res[2])));
-                    }
-                }
-            }
-            catch
-            {
-                //Obviously cannot read the file
-            }
-        }
-
         private static bool checkInteraction()
         {
             WinAPI.LASTINPUTINFO info = new WinAPI.LASTINPUTINFO();
@@ -219,13 +215,13 @@ namespace ActivityTracker
             if (!WinAPI.GetLastInputInfo(ref info))
                 return false;
 
-            return (((Environment.TickCount & int.MaxValue) - (info.dwTime & int.MaxValue)) & int.MaxValue) / 1000.0 / 60.0 < IDLE_TIMEOUT_IN_MINUTES;
+            return (((Environment.TickCount & int.MaxValue) - (info.dwTime & int.MaxValue)) & int.MaxValue) / 1000.0 / 60.0 < TrackerDefines.IDLE_TIMEOUT_IN_MINUTES;
         }
 
         private static string getActiveApplicationName()
         {
             IntPtr hWnd = WinAPI.GetForegroundWindow();
-            WinAPI.GetWindowThreadProcessId(hWnd, out var procId);
+            _ = WinAPI.GetWindowThreadProcessId(hWnd, out var procId);
             var proc = Process.GetProcessById((int)procId);
             string name;
             try
@@ -247,33 +243,21 @@ namespace ActivityTracker
 
         private static string toNiceName(string appName)
         {
-            switch (appName.ToLowerInvariant())
+            return appName.ToLowerInvariant() switch
             {
-                case "devenv":
-                    return "Visual Studio";
-                case "chrome":
-                    return "Chrome";
-                case "outlook":
-                    return "Outlook";
-                case "lync":
-                    return "Skype";
-                case "mstsc":
-                    return "Remote Desktop";
-                case "winword":
-                    return "Word";
-                case "explorer":
-                    return "Explorer";
-                case "notepad":
-                    return "Notepad";
-                case "acrord32":
-                    return "Acrobat Reader";
-                case "winmergeu":
-                    return "WinMerge";
-                case "excel":
-                    return "Excel";
-            }
-
-            return appName;
+                "devenv" => "Visual Studio",
+                "chrome" => "Chrome",
+                "outlook" => "Outlook",
+                "lync" => "Skype",
+                "mstsc" => "Remote Desktop",
+                "winword" => "Word",
+                "explorer" => "Explorer",
+                "notepad" => "Notepad",
+                "acrord32" => "Acrobat Reader",
+                "winmergeu" => "WinMerge",
+                "excel" => "Excel",
+                _ => appName
+            };
         }
     }
 }

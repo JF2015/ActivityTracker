@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Tracker\Tracker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="UIAutomationClient">
       <HintPath>..\..\..\..\..\..\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\5.0.0\ref\net5.0\UIAutomationClient.dll</HintPath>
     </Reference>

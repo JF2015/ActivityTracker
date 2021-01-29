@@ -1,13 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Text;
 
-namespace ActivityTracker
+namespace Tracker
 {
     class WinAPI
     {
-
         [StructLayout(LayoutKind.Sequential)]
         public struct LASTINPUTINFO
         {

@@ -4,28 +4,24 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using Tracker;
 
 namespace ActivityTracker
 {
     public partial class MainForm : Form
     {
-        private Tracker m_tracker;
+        private readonly Tracker.Tracker m_tracker;
         private bool m_allowclose;
 
         public MainForm()
         {
             InitializeComponent();
-            m_tracker = new Tracker();
-            m_tracker.TrackerUpdate += m_trackerUpdated;
+            m_tracker = new Tracker.Tracker();
+            m_tracker.TrackerUpdate += delegate { updateUI(); };
             lstViewEntries
                 .GetType()
                 .GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 ?.SetValue(lstViewEntries, true, null);
-        }
-        
-        private void m_trackerUpdated(object sender, EventArgs e)
-        {
-            updateUI();
         }
 
         private void updateUI()

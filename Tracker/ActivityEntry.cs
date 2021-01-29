@@ -1,8 +1,8 @@
 ﻿using System;
 
-namespace ActivityTracker
+namespace Tracker
 {
-    class ActivityEntry
+    public class ActivityEntry
     {
         public string AppName { get; set; }
         public DateTime ActivityStart { get; set; }

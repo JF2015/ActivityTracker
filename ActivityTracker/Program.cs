@@ -1,8 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ActivityTracker
@@ -18,16 +15,16 @@ namespace ActivityTracker
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            SetCurrentThreadCulture();
+            setCurrentThreadCulture();
             Application.Run(new MainForm());
         }
 
-        private static void SetCurrentThreadCulture()
+        private static void setCurrentThreadCulture()
         {
-            Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("en-US");
-            Thread.CurrentThread.CurrentCulture.NumberFormat.CurrencyDecimalSeparator = ".";
-            Thread.CurrentThread.CurrentCulture.NumberFormat.NumberDecimalSeparator = ".";
-            Thread.CurrentThread.CurrentCulture.NumberFormat.NumberGroupSeparator = ",";
+            Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("en-US")
+            {
+                NumberFormat = { CurrencyDecimalSeparator = ".", NumberDecimalSeparator = ".", NumberGroupSeparator = "," }
+            };
         }
     }
 }

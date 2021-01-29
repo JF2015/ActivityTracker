@@ -1,8 +1,8 @@
 ﻿using System;
 
-namespace ActivityTracker
+namespace Tracker
 {
-    class ActivityDuration
+    public class ActivityDuration
     {
         public string AppName { get; set; }
         public TimeSpan Duration { get; set; }
